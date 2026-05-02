@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Geometry‑Dash‑ish (More Obstacles + 100k Win)</title>
+  <style>
+  body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: sans-serif;
+  }
+  canvas {
+    border: 3px solid #333;
+    image-rendering: pixelated;
+  }
+  #game-over {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    color: white;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    font-size: 2.5rem;
+  }
+  #win-message {
+    color: #00cc00;
+    font-weight: bold;
+    text-shadow: 0 0 8px #00ff00;
+  }
+  #game-over p {
+    font-size: 1.8rem;
+    margin: 8px 0;
+  }
+  button {
+    margin-top: 20px;
+    padding: 12px 30px;
+    font-size: 1.2rem;
+    background: #0099ff;
+    border: none;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #0077cc;
+  }
+</style>
+</head>
+<body>
+  <canvas id="game" width="800" height="400"></canvas>
+  <div id="game-over">
+    <p id="win-message">You Win!</p>
+    <p id="result-text">Steps walked: <span id="final-dist">0</span></p>
+    <button id="restart-btn">Restart</button>
+  </div>
+
+  <script>
+    // Game setup
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const midY = canvas.height / 2;
+
+    // Game state
+    let player = {
+      x: 120,
+      y: midY,
+      width: 20,
+      height: 20,
+      velY: 0,
+      onGround: false,
+      jumpsUsed: 0,
+      maxJumps: 2,
+      canFloat: true,
+      jumpPower: -9.5,
+      gravity: 0.5,
+    };
+
+    let camera = { x: 0 };
+    let obstacles = [];
+    let ground = [];
+    let distance = 0;
+    let speed = 4;
+    let maxSpeed = 10;
+    let gameRunning = true;
+
+    // Float state
+    let isFloating = false;
+    let floatTime = 0;
+    const maxFloatMs = 2000;     // 2 seconds
+    const floatCooldownMs = 1200; // 1.2 seconds
+    let lastFloatEnd = 0;
+
+    // Colors
+    const C = {
+      bg: "#0e0e15",
+      ground: "#222",
+      player: "#ffcc00",
+      playerLine: "#000",
+      spike: "#c00",
+      block: "#aaa",
+      grid: "#222",
+      floatGlow: "#00ccff",
+      bgWin: "rgba(0,0,0,0.9)",
+      winText: "#00ff00",
+    };
+
+    // Long Geometry‑Dash‑ish level (more obstacles and short gaps)
+    function buildLevel() {
+      let x = 200;
+
+      // Short‑gap platform section
+      function addShortGapSection(count) {
+        for (let i = 0; i < count; i++) {
+          const w = 60 + Math.floor(Math.random()*60); // 60–120
+          ground.push({ x, y: midY + 100, w, h: 20 });
+          x += w + 20;
+        }
+      }
+
+      // More towers and spike blocks
+      function addTowersAndSpikes(len) {
+        const minHeight = 40;
+        const maxHeight = 80;
+        for (let i = 0; i < len; i++) {
+          const choose = Math.random();
+          if (choose < 0.5) {
+            const g = 70 + Math.floor(Math.random()*40); // 70–110
+            ground.push({ x, y: midY + 100, w: g, h: 20 });
+            x += g + 20;
+          } else {
+            const towerW = 16 + Math.floor(Math.random()*4);
+            const towerH = minHeight + Math.floor(Math.random()*(maxHeight-minHeight));
+            obstacles.push({ x, y: midY+100-towerH, w: towerW, h: towerH, type: "block" });
+            x += towerW + 15;
+          }
+        }
+      }
+
+      // Spike strip (dense spikes)
+      function addSpikes(count, gap=12) {
+        for (let i = 0; i < count; i++) {
+          obstacles.push({ x: x - 100 + i*gap, y: midY+90, type: "spike", h: 10 });
+        }
+        x += 250;
+      }
+
+      // 1. Dense short platforms + obstacles
+      for (let i=0; i<4; i++) {
+        addShortGapSection(12);
+        addTowersAndSpikes(10);
+        addSpikes(10, 16);
+      }
+
+      // 2. Mixed high‑density obstacles
+      for (let i=0; i<8; i++) {
+        addTowersAndSpikes(15);
+        addShortGapSection(10);
+        addSpikes(12, 14);
+      }
+
+      // 3. Spike wall + tight platforms
+      addSpikes(40, 10);
+      for (let i=0; i<10; i++) {
+        const w = 140 + Math.floor(Math.random()*40);
+        ground.push({ x, y: midY + 100, w, h: 20 });
+        x += 180;
+      }
+
+      // 4. Very dense obstacle section
+      for (let i=0; i<10; i++) {
+        addTowersAndSpikes(20);
+        addSpikes(10, 16);
+        addShortGapSection(10);
+      }
+
+      // 5. Another long straight but with small spikes here and there
+      for (let i=0; i<30; i++) {
+        const w = 160 + Math.floor(Math.random()*40);
+        ground.push({ x, y: midY + 100, w, h: 20 });
+        x += 200;
+
+        if (i % 5 === 0) {
+          obstacles.push({ x: x - 80, y: midY+95, w: 12, h: 15, type: "block" });
+          obstacles.push({ x: x - 100, y: midY+90, type: "spike", h: 10 });
+        }
+      }
+
+      // 6. Final long straight corridor with random obstacles
+      for (let i=0; i<60; i++) {
+        const w = 180 + Math.floor(Math.random()*40);
+        ground.push({ x, y: midY + 100, w, h: 20 });
+        x += 220;
+
+        if (i % 3 === 0) {
+          addSpikes(8, 15);
+          addTowersAndSpikes(3);
+        }
+      }
+    }
+
+    // Jump (double‑jump)
+    function jump() {
+      if (player.onGround) {
+        player.jumpsUsed = 0;
+        player.velY = player.jumpPower;
+        player.onGround = false;
+      } else if (player.jumpsUsed < player.maxJumps) {
+        player.velY = player.jumpPower;
+        player.jumpsUsed++;
+      }
+    }
+
+    // Float (no forward/back dash, just slow fall in air)
+    function float() {
+      const now = Date.now();
+      if (player.onGround || isFloating || now - lastFloatEnd < floatCooldownMs) return;
+
+      isFloating = true;
+      floatTime = 0;
+      player.canFloat = false;
+    }
+
+    // Input
+    let input = {
+      jump: false,
+      float: false,
+    };
+
+    window.addEventListener("keydown", (e) => {
+      if (!gameRunning) return;
+      if (e.code === "Space" || e.key === "ArrowUp") {
+        e.preventDefault();
+        input.jump = true;
+      }
+      if (e.code === "ShiftLeft" || e.code === "KeyD" || e.code === "ArrowRight" || e.code === "KeyA") {
+        e.preventDefault();
+        input.float = true;
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "Space" || e.key === "ArrowUp") {
+        input.jump = false;
+      }
+      if (e.code === "ShiftLeft" || e.code === "KeyD" || e.code === "ArrowRight" || e.code === "KeyA") {
+        input.float = false;
+      }
+    });
+
+    window.addEventListener("touchstart", () => {
+      if (gameRunning) jump();
+    });
+
+    document.getElementById("restart-btn").addEventListener("click", () => {
+      reset();
+      document.getElementById("game-over").style.display = "none";
+    });
+
+    function reset() {
+      player = {
+        x: 120,
+        y: midY,
+        width: 20,
+        height: 20,
+        velY: 0,
+        onGround: false,
+        jumpsUsed: 0,
+        maxJumps: 2,
+        canFloat: true,
+        jumpPower: -9.5,
+        gravity: 0.5,
+      };
+
+      camera = { x: 0 };
+      obstacles = [];
+      ground = [];
+      distance = 0;
+      speed = 4;
+      maxSpeed = 10;
+      gameRunning = true;
+
+      isFloating = false;
+      floatTime = 0;
+      lastFloatEnd = 0;
+
+      buildLevel();
+    }
+
+    // Collision helpers
+    function collidesRect(rect1, rect2) {
+      return rect1.x < rect2.x + rect2.w &&
+             rect1.x + rect1.w > rect2.x &&
+             rect1.y < rect2.y + rect2.h &&
+             rect1.y + rect1.h > rect2.y;
+    }
+
+    function collidesPointSpike(px, py, sx, sy, h) {
+      const spikeTopY = sy;
+      const spikeBaseY = sy + h;
+      const spikeBaseWidth = 20;
+      const spikeLeftX = sx - spikeBaseWidth/2;
+      const spikeRightX = sx + spikeBaseWidth/2;
+      return px >= spikeLeftX && px <= spikeRightX && py >= spikeTopY && py <= spikeBaseY;
+    }
+
+    // Game loop
+    let lastTime = Date.now();
+    function update() {
+      const now = Date.now();
+      const dt = now - lastTime;
+      lastTime = now;
+
+      if (!gameRunning) return;
+
+      // Handle jump
+      if (input.jump) {
+        jump();
+        input.jump = false;
+      }
+      if (input.float) {
+        float();
+        input.float = false;
+      }
+
+      // Update float timer
+      if (isFloating) {
+        floatTime += dt;
+        if (floatTime >= maxFloatMs) {
+          isFloating = false;
+          lastFloatEnd = now;
+        }
+      }
+
+      // Gravity (only if not floating)
+      if (!isFloating) {
+        player.velY += player.gravity;
+      } else {
+        if (player.velY > 0) player.velY *= 0.94;
+        if (player.velY < 0) player.velY *= 0.97;
+      }
+      player.y += player.velY;
+
+      // Check ground (reset double‑jump and float)
+      player.onGround = false;
+      for (const g of ground) {
+        const gx = g.x - camera.x;
+        if (player.y + player.height >= g.y &&
+            player.y < g.y && 
+            player.x + player.width > gx && 
+            player.x < gx + g.w) {
+          player.y = g.y - player.height;
+          player.velY = 0;
+          player.onGround = true;
+          player.jumpsUsed = 0;
+          if (isFloating) {
+            isFloating = false;
+            lastFloatEnd = now;
+          }
+        }
+      }
+
+      // Camera and scrolling
+      camera.x += speed;
+      distance += speed;
+
+      // Speed up over time
+      if (speed < maxSpeed) {
+        speed += 0.0015;
+      }
+
+      // Collision with obstacles
+      for (const o of obstacles) {
+        const ox = o.x - camera.x;
+        if (o.type === "spike") {
+          const spikeY = o.y;
+          const spikeH = o.h;
+          if (collidesPointSpike(player.x + player.width/2, player.y + player.height, ox, spikeY, spikeH)) {
+            gameRunning = false;
+            document.getElementById("final-dist").textContent = Math.floor(distance);
+            document.getElementById("win-message").style.display = "none";
+            document.getElementById("result-text").textContent = "Steps walked: " + Math.floor(distance);
+            document.getElementById("game-over").style.display = "flex";
+          }
+        } else if (o.type === "block") {
+          const r = {
+            x: ox,
+            y: o.y,
+            w: o.w,
+            h: o.h
+          };
+          if (collidesRect(player, r)) {
+            gameRunning = false;
+            document.getElementById("final-dist").textContent = Math.floor(distance);
+            document.getElementById("win-message").style.display = "none";
+            document.getElementById("result-text").textContent = "Steps walked: " + Math.floor(distance);
+            document.getElementById("game-over").style.display = "flex";
+          }
+        }
+      }
+
+      // Win at 100,000 steps
+      if (distance >= 100000) {
+        gameRunning = false;
+        document.getElementById("final-dist").textContent = Math.floor(distance);
+        document.getElementById("win-message").style.display = "block";
+        document.getElementById("result-text").innerHTML = "<span id='win-sub'>Nice job!</span>";
+        document.getElementById("game-over").style.backgroundColor = C.bgWin;
+        document.getElementById("game-over").style.color = C.winText;
+        document.getElementById("game-over").style.display = "flex";
+      }
+
+      // Game over if fall too far
+      const bottomYDeath = midY + 160;
+      if (player.y > bottomYDeath) {
+        gameRunning = false;
+        document.getElementById("final-dist").textContent = Math.floor(distance);
+        document.getElementById("win-message").style.display = "none";
+        document.getElementById("result-text").textContent = "Steps walked: " + Math.floor(distance);
+        document.getElementById("game-over").style.display = "flex";
+      }
+
+      // Off‑screen ground cleanup
+      ground = ground.filter(g => g.x - camera.x + g.w > -50);
+      obstacles = obstacles.filter(o => o.x - camera.x + (o.w || 20) > -50);
+    }
+
+    function draw() {
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid lines (optional)
+      ctx.strokeStyle = C.grid;
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+
+      // Ground
+      for (const g of ground) {
+        const gx = g.x - camera.x;
+        ctx.fillStyle = C.ground;
+        ctx.fillRect(gx, g.y, g.w, g.h);
+      }
+
+      // Obstacles
+      for (const o of obstacles) {
+        const ox = o.x - camera.x;
+        if (o.type === "spike") {
+          ctx.fillStyle = C.spike;
+          ctx.beginPath();
+          ctx.moveTo(ox-10, o.y);
+          ctx.lineTo(ox+10, o.y);
+          ctx.lineTo(ox, o.y + o.h);
+          ctx.closePath();
+          ctx.fill();
+        } else if (o.type === "block") {
+          ctx.fillStyle = C.block;
+          ctx.fillRect(ox, o.y, o.w, o.h);
+        }
+      }
+
+      // Float visual effect
+      if (isFloating) {
+        ctx.fillStyle = C.floatGlow;
+        ctx.fillRect(player.x - 4, player.y - 4, player.width + 8, player.height + 8);
+      }
+
+      // Player
+      ctx.fillStyle = C.player;
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+      ctx.strokeStyle = C.playerLine;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(player.x, player.y, player.width, player.height);
+    }
+
+    function tick() {
+      update();
+      draw();
+      requestAnimationFrame(tick);
+    }
+
+    // Start
+    buildLevel();
+    tick();
+  </script>
+</body>
+</html>
